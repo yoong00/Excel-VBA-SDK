@@ -1,0 +1,683 @@
+Option Explicit
+
+Const TECON = 1
+Const TECOFF = 0
+
+Dim WLTableArray() As Double
+Dim DataArray() As Long
+Dim WLDataArry() As Double
+Dim fCoef() As Double
+Dim dWLArray() As Double
+Dim Average() As Long
+Dim lIntTime As Double
+Dim MemTime As Double
+Dim CaliDataRead As String
+Dim CaliDataWrite As String
+
+Public nTOTPixelNo As Integer, nRealPixelNo As Integer, EffectivePixelIndex As Integer
+Public sModel As String
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Function     : Cali_data_Click()                                                  **
+'**        Description  : This function selects the User Calibration Data                    **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub Cali_data_Click()
+    Dim lastRow As Integer
+    Dim i As Integer
+    Dim xMax As Integer, xMin As Integer
+    
+    lastRow = Sheet2.Cells(Rows.Count, 4).End(xlUp).Row
+
+    For i = 0 To lastRow - 2
+        xMax = Application.WorksheetFunction.Max(Sheet2.Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow - 2, 5)))
+    Next i
+    
+    For i = 0 To lastRow - 2
+        xMin = Application.WorksheetFunction.Min(Sheet2.Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow - 2, 5)))
+    Next i
+                
+    Worksheets("ScanData").Cells(2, 6).Value = xMax
+    Worksheets("ScanData").Cells(3, 6).Value = xMin
+               
+    Dim chart2 As Chart
+    Set chart2 = ActiveSheet.ChartObjects(1).Chart
+        With chart2
+            .SetSourceData Source:=Sheets("Parameters").Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow, 6))
+            .Axes(xlCategory).MinimumScale = Sheets("ScanData").Range("F3").Value
+            .Axes(xlCategory).MaximumScale = Sheets("ScanData").Range("F2").Value
+            .Axes(xlValue).MaximumScale = 65535
+        End With
+        
+    DarkScanActive.Value = False
+    DarkScanActive.Enabled = False
+
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Function     : cbModelList_Change()                                               **
+'**        Description  : This function is Spectrometer Device type                          **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub cbModelList_Change()
+    
+    Dim DevNum As Variant
+    
+    DevNum = Array("SM24X", "SM44X", "SM303", "SM642")
+    Sheet1.cbModelList.List = DevNum
+        
+    If (cbModelList.Activate) Then
+    check_connections.Enabled = True
+    ConnectionText.text = ""
+    ChannelsText.text = ""
+    End If
+    
+    DarkScanActive.Enabled = False
+    DarkScanActive.Value = False
+    Dark_Scan.Enabled = False
+    check_channels.Enabled = False
+    Integration_time.Enabled = False
+    current_data.Enabled = False
+    Graph_view.Enabled = False
+    Cali_data.Enabled = False
+    Sheet2.cmd_Calc.Enabled = False
+    GetData_Adv.Enabled = False
+    EEPROM.Value = True
+    
+End Sub
+
+'*************************************************************************************************
+'**                                                                                             **
+'**        Function      : check_connections_Click()                                            **
+'**        Description   : This function is used to test and check the connection of USB boards **
+'**        DLL Fuction   : spTestAllChannels(ByVal sOrderType As Integer)                       **
+'**                                                                                             **
+'*************************************************************************************************
+
+Private Sub check_connections_Click()
+
+    
+    Dim sRtn As Integer
+   
+    sRtn = spTestAllChannels(0) ''''''''''''''''''''''''''''''''''''''''''''''''''DLL Function : spTestAllChannels  0:SP_ORDER_BY_USBPORTNUM
+
+     
+    If (sRtn > 0) Then
+    
+        ConnectionText.text = "Testing the USB board... OK!"
+        
+        check_channels.Enabled = True
+        Integration_time.Enabled = True
+        check_channels.Enabled = True
+   
+        
+    Else: ConnectionText.text = "The USB board does not work correctly."
+        check_channels.Enabled = False
+        Integration_time.Enabled = False
+        check_channels.Enabled = False
+        current_data.Enabled = False
+        Graph_view.Enabled = False
+    End If
+
+End Sub
+
+'*******************************************************************************************************
+'**                                                                                                   **
+'**        Function      : check_channels_Click()                                                     **
+'**        Description   : This function is used to initialize all USB boards connected at once,      **
+'**                        Set chart,WL,Intensity(Max,Min)                                            **
+'**        DLL Function  : spSetupAllChannels ()                                                      **
+'**                        spInitAllChannels(ByVal sCCDType As Integer)                               **
+'**                        spGetWLTable(WLArray As Double, ByVal sChannel As Integer)                 **
+'**                                                                                                   **
+'*******************************************************************************************************
+
+Private Sub check_channels_Click()
+    
+    Dim sRtn As Integer
+    Dim SpType As Integer
+    Dim i As Integer
+    Dim c As Range
+    Dim idx As Long
+    Dim varValues As Variant
+    Dim lastRow As Integer
+    Dim xMax As Integer, yMax As Double, xMin As Integer, yMin As Integer
+    Dim arr As Range
+   
+    sModel = cbModelList.text
+
+    
+    sRtn = spSetupAllChannels               '''''''''''''''''''' DLL Function : spSetupGivenChannel
+    If (sRtn > 0) Then
+            
+        ChannelsText.text = "Setup Channels...OK!"
+        
+        current_data.Enabled = True
+        Graph_view.Enabled = True
+        Dark_Scan.Enabled = True
+        GetData_Adv.Enabled = True
+        If (sModel = "SM24X") Then
+            nTOTPixelNo = 2080                ''''''''''''''''''' D1~D32 + S1~S2048
+            nRealPixelNo = 2048
+            EffectivePixelIndex = 32
+            lIntTime = 30
+            SpType = 0
+            
+        ElseIf (sModel = "SM44X") Then
+            nTOTPixelNo = 3680                '''''''''''''''''''' D1~D32 + S1~S3648
+            nRealPixelNo = 3648
+            EffectivePixelIndex = 32
+            lIntTime = 30
+            SpType = 1
+            
+        ElseIf (sModel = "SM303") Then
+            nTOTPixelNo = 1056                '''''''''''''''''''' D1~D10 + S1~S1024 + D11~D20
+            nRealPixelNo = 1024
+            EffectivePixelIndex = 10
+            lIntTime = 30
+            SpType = 2
+            spSetTEC TECON, 0                 '''''''''''''''''''' DLL Function : spSetTEC   SM303 TEC On
+
+        ElseIf (sModel = "SM642") Then
+            nTOTPixelNo = 2080                '''''''''''''''''''' D1~D10 + S1~S2048 + D11~D20
+            nRealPixelNo = 2048
+            EffectivePixelIndex = 10
+            lIntTime = 30
+            SpType = 4
+            
+        Else: MsgBox "Not Seleted Model"
+              ChannelsText.text = " Setup Channels...Error!"
+              current_data.Enabled = False
+              Graph_view.Enabled = False
+              sRtn = -1
+            
+            
+        End If
+        
+
+        If (sRtn > 0) Then
+            ReDim DataArray(nTOTPixelNo)        ''''''''''''''' DataArray Mem Allocation
+            ReDim WLTableArray(nRealPixelNo)    ''''''''''''''' Wavelenth Table Mem Allocation
+        
+            
+            sRtn = spInitAllChannels(SpType)    ''''''''''''''' DLL Function : spInitAllChannel    iType = 0:SP_CCD_SONY, 1:SP_CCD_TOSHIBA, 2:SM303, 4:SM642
+            sRtn = spGetWLTable(WLTableArray(0), 0) ''''''''''' DLL Function : spGetWLTable         gets the Wavelength Table of the connected device
+     
+                       
+            
+            Worksheets("ScanData").Range("A2:D3682").Clear
+            Worksheets("ScanData").Range("F2:I4").Clear
+            Worksheets("Parameters").Range("B1:B4").Clear
+            Worksheets("Parameters").Range("D2:F3682").Clear
+            
+            For i = 0 To nRealPixelNo - 1
+                Worksheets("ScanData").Cells(2 + i, 1).Value = i + 1
+                Worksheets("ScanData").Cells(2 + i, 2).Value = WLTableArray(i)
+            Next i
+            
+            
+            lastRow = Sheet3.Cells(Rows.Count, 1).End(xlUp).Row   ''''''''' Set WL,Intensity(Max,Min)
+        
+            For i = 0 To lastRow - 2
+                xMax = Application.WorksheetFunction.Max(Sheet3.Range(Sheet3.Cells(2, 2), Sheet3.Cells(lastRow - 2, 2)))
+            Next i
+    
+            For i = 0 To lastRow - 2
+                xMin = Application.WorksheetFunction.Min(Sheet3.Range(Sheet3.Cells(2, 2), Sheet3.Cells(lastRow - 2, 2)))
+            Next i
+                
+                Worksheets("ScanData").Cells(2, 6).Value = Fix(xMax)
+                Worksheets("ScanData").Cells(3, 6).Value = Fix(xMin)
+               
+            
+            If (EEPROM.Value = True) Then
+                Dim chart2 As Chart                                  ''''''''''' Set Chart
+                Set chart2 = ActiveSheet.ChartObjects(1).Chart
+            
+                With chart2
+                    .SetSourceData Source:=Sheets("ScanData").Range(Sheet3.Cells(2, 2), Sheet3.Cells(lastRow, 3))
+                    .Axes(xlCategory).MinimumScale = Sheets("ScanData").Range("F3").Value
+                    .Axes(xlCategory).MaximumScale = Sheets("ScanData").Range("F2").Value
+                End With
+            ElseIf (Cali_data.Value = True) Then
+                Set chart2 = ActiveSheet.ChartObjects(1).Chart
+            
+                With chart2
+                    .SetSourceData Source:=Sheets("Parameters").Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow, 6))
+                End With
+            End If
+        
+            If (Integration_time.text = "") Then
+                ElseIf (sModel = "SM44X") Then
+                    lIntTime = Integration_time.text
+                    sRtn = spSetDblIntEx(lIntTime, 0)
+                ElseIf (Integration_time.text > 0) Then
+                    lIntTime = Integration_time.text
+                End If
+            End If
+       
+    Else: ChannelsText.text = " Setup Channels...Error!"
+    
+    End If
+    
+  
+    Sheet2.cmd_Calc.Enabled = True
+    
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Fuction       : cmdSetVar_Click()                                                 **
+'**        Description   : Go to Parmeters Sheet                                             **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub cmdSetVar_Click()
+    
+    DoEvents
+    
+    Worksheets("Parameters").Activate
+    
+End Sub
+Public Sub dataAdv()
+
+    Dim sRtn As Integer, i As Double
+    Dim lastRow As Integer
+    Dim c As Range
+    Dim idx As Integer
+    Dim dSumV As Double
+    Dim RMS As Double
+    Dim sum As Double
+    Dim xMax As Integer, xMin As Integer, yMax As Double, yMin As Double
+    Dim TimeAve As Integer, BadPxlNum As Integer, BadPxlInfo(5) As Integer, sFFTMax As Integer
+    TimeAve = 1
+    BadPxlNum = 0
+    sFFTMax = 0
+    
+    ReDim DataArray(nTOTPixelNo)                   ''''''''''''''' DataArray mem Allocation
+    sRtn = spReadDataAdvEx(DataArray(0), TimeAve, sFFTMax, BadPxlNum, BadPxlInfo(0), 0)
+    sRtn = spReadDataAdvEx(DataArray(0), TimeAve, sFFTMax, BadPxlNum, BadPxlInfo(0), 0)           ''''''''''''''' DLL Function : Data Capture
+  
+    
+    dSumV = 0
+    sum = 0
+        
+    ReDim Average(nTOTPixelNo)                     ''''''''''''''' Average mem Allocation
+    
+    Average() = DataArray()                        ''''''''''''''' Set RMS
+
+    For i = 32 To nTOTPixelNo - 1
+        sum = sum + Average(i) / nRealPixelNo
+    Next i
+            
+    For i = 32 To nTOTPixelNo - 1
+        dSumV = dSumV + ((Average(i) - sum) ^ 2) / nRealPixelNo
+    Next i
+    
+    RMS = Sqr(dSumV)
+    Worksheets("ScanData").Cells(2, 9).Value = RMS
+    
+    
+    If (EEPROM.Value = True) Then
+        If (DarkScanActive.Value = True) Then                       ''' Set Intensity(DarkScan)
+            For i = 0 To nRealPixelNo - 1
+                DataArray(i + EffectivePixelIndex) = DataArray(i + EffectivePixelIndex) - DarkArray(i + EffectivePixelIndex)
+                Worksheets("ScanData").Cells(2 + i, 3).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+        
+        ElseIf (DarkScanActive.Value = False) Then                  ''' Set Intensity
+            For i = 0 To nRealPixelNo - 1
+                Worksheets("ScanData").Cells(2 + i, 3).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+
+        lastRow = Sheet3.Cells(Rows.Count, 1).End(xlUp).Row          ''' Set WL,Intensity(Max,Min)
+   
+        For i = 0 To lastRow - 2
+            yMax = Application.WorksheetFunction.Max(Sheet3.Range(Sheet3.Cells(2, 3), Sheet3.Cells(lastRow - 2, 3)))
+        Next i
+    
+        For i = 0 To lastRow - 2
+            yMin = Application.WorksheetFunction.Min(Sheet3.Range(Sheet3.Cells(2, 3), Sheet3.Cells(lastRow - 2, 3)))
+    
+        Next i
+            Worksheets("ScanData").Cells(2, 7).Value = yMax
+            Worksheets("ScanData").Cells(3, 7).Value = yMin
+        End If
+        
+    ElseIf (Cali_data.Value = True) Then
+        If (DarkScanActive.Value = True) Then                       ''' Set Intensity(DarkScan)
+            For i = 0 To nRealPixelNo - 1
+                DataArray(i + EffectivePixelIndex) = DataArray(i + EffectivePixelIndex) - DarkArray(i + EffectivePixelIndex)
+                Worksheets("Parameters").Cells(2 + i, 6).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+        ElseIf (DarkScanActive.Value = False) Then                  ''' Set Intensity
+            For i = 0 To nRealPixelNo - 1
+                Worksheets("Parameters").Cells(2 + i, 6).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+        
+        lastRow = Sheet3.Cells(Rows.Count, 1).End(xlUp).Row          ''' Set WL,Intensity(Max,Min)
+   
+        For i = 0 To lastRow - 2
+            yMax = Application.WorksheetFunction.Max(Sheet2.Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow - 2, 5)))
+        Next i
+    
+        For i = 0 To lastRow - 2
+            yMin = Application.WorksheetFunction.Min(Sheet2.Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow - 2, 5)))
+    
+        Next i
+            Worksheets("ScanData").Cells(2, 7).Value = yMax
+            Worksheets("ScanData").Cells(3, 7).Value = yMin
+        End If
+    End If
+
+
+
+End Sub
+Public Sub dataOld()
+
+    Dim sRtn As Integer, i As Double
+    Dim lastRow As Integer
+    Dim c As Range
+    Dim idx As Integer
+    Dim dSumV As Double
+    Dim RMS As Double
+    Dim sum As Double
+    Dim xMax As Integer, xMin As Integer, yMax As Double, yMin As Double
+    
+    ReDim DataArray(nTOTPixelNo)                   ''''''''''''''' DataArray mem Allocation
+    sRtn = spReadDataEx(DataArray(0), 0)
+    sRtn = spReadDataEx(DataArray(0), 0)           ''''''''''''''' DLL Function : Data Capture
+    
+    
+    dSumV = 0
+    sum = 0
+        
+    ReDim Average(nTOTPixelNo)                     ''''''''''''''' Average mem Allocation
+    
+    Average() = DataArray()                        ''''''''''''''' Set RMS
+
+    For i = 32 To nTOTPixelNo - 1
+        sum = sum + Average(i) / nRealPixelNo
+    Next i
+            
+    For i = 32 To nTOTPixelNo - 1
+        dSumV = dSumV + ((Average(i) - sum) ^ 2) / nRealPixelNo
+    Next i
+    
+    RMS = Sqr(dSumV)
+    Worksheets("ScanData").Cells(2, 9).Value = RMS
+    
+    
+    If (EEPROM.Value = True) Then
+        If (DarkScanActive.Value = True) Then                       ''' Set Intensity(DarkScan)
+            For i = 0 To nRealPixelNo - 1
+                DataArray(i + EffectivePixelIndex) = DataArray(i + EffectivePixelIndex) - DarkArray(i + EffectivePixelIndex)
+                Worksheets("ScanData").Cells(2 + i, 3).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+        
+        ElseIf (DarkScanActive.Value = False) Then                  ''' Set Intensity
+            For i = 0 To nRealPixelNo - 1
+                Worksheets("ScanData").Cells(2 + i, 3).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+
+        lastRow = Sheet3.Cells(Rows.Count, 1).End(xlUp).Row          ''' Set WL,Intensity(Max,Min)
+   
+        For i = 0 To lastRow - 2
+            yMax = Application.WorksheetFunction.Max(Sheet3.Range(Sheet3.Cells(2, 3), Sheet3.Cells(lastRow - 2, 3)))
+        Next i
+    
+        For i = 0 To lastRow - 2
+            yMin = Application.WorksheetFunction.Min(Sheet3.Range(Sheet3.Cells(2, 3), Sheet3.Cells(lastRow - 2, 3)))
+    
+        Next i
+            Worksheets("ScanData").Cells(2, 7).Value = yMax
+            Worksheets("ScanData").Cells(3, 7).Value = yMin
+        End If
+        
+    ElseIf (Cali_data.Value = True) Then
+        If (DarkScanActive.Value = True) Then                       ''' Set Intensity(DarkScan)
+            For i = 0 To nRealPixelNo - 1
+                DataArray(i + EffectivePixelIndex) = DataArray(i + EffectivePixelIndex) - DarkArray(i + EffectivePixelIndex)
+                Worksheets("Parameters").Cells(2 + i, 6).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+        ElseIf (DarkScanActive.Value = False) Then                  ''' Set Intensity
+            For i = 0 To nRealPixelNo - 1
+                Worksheets("Parameters").Cells(2 + i, 6).Value = DataArray(i + EffectivePixelIndex)
+            Next i
+        
+        lastRow = Sheet3.Cells(Rows.Count, 1).End(xlUp).Row          ''' Set WL,Intensity(Max,Min)
+   
+        For i = 0 To lastRow - 2
+            yMax = Application.WorksheetFunction.Max(Sheet2.Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow - 2, 5)))
+        Next i
+    
+        For i = 0 To lastRow - 2
+            yMin = Application.WorksheetFunction.Min(Sheet2.Range(Sheet2.Cells(2, 5), Sheet2.Cells(lastRow - 2, 5)))
+    
+        Next i
+            Worksheets("ScanData").Cells(2, 7).Value = yMax
+            Worksheets("ScanData").Cells(3, 7).Value = yMin
+        End If
+    End If
+
+
+
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Fuction       : current_data_Click()                                              **
+'**        Description   : The moment you clicked, Once data is acquired,                    **
+'**                        the values of index, wave, intensity, RMS, WL (Max, Min)          **
+'**                        and Intensity (Max, Min) are saved in the ScanData sheet          **
+'**        DLL Function  : spReadDataAdvEx(lpArray As Long, ByVal sChannel As Integer)       **
+'**                                                                                          **
+'**********************************************************************************************
+
+Public Sub current_data_Click()
+    Dim sRtn As Double
+    If (sModel = "SM44X") Then
+        If (lIntTime > 7 And MemTime <= 7) Then
+            sRtn = spReadDataEx(DataArray(0), 0)
+            MemTime = lIntTime
+            dataOld
+        Else
+            dataOld
+        End If
+        
+    Else
+        dataOld
+    End If
+End Sub
+
+'*************************************************************************************************************************
+'**                                                                                                                     **
+'**        Fuction       : Dark_Scan_Click()                                                                            **
+'**        Description   : When the button is clicked, Obtain and record the dark data only once in the scan data sheet,**
+'**                        and Enable DarkScanActive checkbox                                                           **
+'**        DLL Function  : spReadDataAdvEx(lpArray As Long, ByVal sChannel As Integer)                                     **
+'**                                                                                                                     **
+'*************************************************************************************************************************
+
+Private Sub Dark_Scan_Click()
+
+    Dim sRtn As Integer
+    Dim i As Integer
+    
+    sRtn = spReadDataEx(DarkArray(0), 0) ''''''''''''''''''''''''''''''''''''''''DLL Function : DarkData Capture
+         
+    For i = 0 To nRealPixelNo - 1
+    Worksheets("ScanData").Cells(2 + i, 4).Value = DarkArray(i + EffectivePixelIndex)
+    Next i
+    
+    DarkScanActive.Enabled = True
+End Sub
+
+
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Fuction       : DataSetting_Click()                                               **
+'**        Description   : Go to ScanData Sheet                                              **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub DataSetting_Click()
+
+    DoEvents
+    
+    Worksheets("ScanData").Activate
+        
+        
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Function     : EEPROM_Click()                                                     **
+'**        Description  : This function selects the Factory Default Data                     **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub EEPROM_Click()
+    Dim lastRow, i As Integer
+    Dim xMax, xMin As Integer
+  
+            
+    lastRow = Sheet3.Cells(Rows.Count, 1).End(xlUp).Row   ''''''''' Set WL,Intensity(Max,Min)
+        
+    For i = 0 To lastRow - 2
+        xMax = Application.WorksheetFunction.Max(Sheet3.Range(Sheet3.Cells(2, 2), Sheet3.Cells(lastRow - 2, 2)))
+    Next i
+    
+    For i = 0 To lastRow - 2
+        xMin = Application.WorksheetFunction.Min(Sheet3.Range(Sheet3.Cells(2, 2), Sheet3.Cells(lastRow - 2, 2)))
+    Next i
+                
+    Worksheets("ScanData").Cells(2, 6).Value = xMax
+    Worksheets("ScanData").Cells(3, 6).Value = xMin
+               
+            
+            
+    Dim chart2 As Chart                                  ''''''''''' Set Chart
+    Set chart2 = ActiveSheet.ChartObjects(1).Chart
+            
+    With chart2
+        .SetSourceData Source:=Sheets("ScanData").Range(Sheet3.Cells(2, 2), Sheet3.Cells(lastRow, 3))
+        .Axes(xlCategory).MinimumScale = Sheets("ScanData").Range("F3").Value
+        .Axes(xlCategory).MaximumScale = Sheets("ScanData").Range("F2").Value
+        .Axes(xlValue).MaximumScale = 65535
+    End With
+    
+    DarkScanActive.Value = False
+    DarkScanActive.Enabled = False
+    
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Fuction       : EEPROM_Sheet_Click()                                              **
+'**        Description   : Go to EEPROM Sheet                                                **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub EEPROM_Sheet_Click()
+    DoEvents
+    
+    Worksheets("EEPROM").Activate
+    Worksheets("EEPROM").Visible = 1
+    
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Fuction       : GetData_Adv_Click()                                               **
+'**        Description   : The moment you clicked, Once data is acquired,                    **
+'**                        the values of index, wave, intensity, RMS, WL (Max, Min),BadPxl,  **
+'**                        TimeAve and Intensity (Max, Min) are saved in the ScanData sheet  **
+'**        DLL Function  : spReadDataAdvEx(lpArray As Long, ByVal sTimeAve As Integer,       **
+'**                        ByValusFFTMax As Integer, ByVal sBadPxlNum As Integer,            **
+'**                        spBad As Integer, ByVal sChannel As Integer)                      **
+'**                                                                                          **
+'**********************************************************************************************
+
+Private Sub GetData_Adv_Click()
+    Dim sRtn As Double
+    Dim TimeAve As Integer, BadPxlNum As Integer, BadPxlInfo(5) As Integer, sFFTMax As Integer
+    TimeAve = 1
+    BadPxlNum = 0
+    sFFTMax = 0
+    
+    If (sModel = "SM44X") Then
+        If (lIntTime > 7 And MemTime <= 7) Then
+            sRtn = spReadDataAdvEx(DataArray(0), TimeAve, sFFTMax, BadPxlNum, BadPxlInfo(0), 0)
+            MemTime = lIntTime
+            dataAdv
+        Else
+            dataAdv
+        End If
+        
+    Else
+        dataAdv
+    End If
+End Sub
+
+'***************************************************************************************************
+'**                                                                                               **
+'**        Function     : Graph_view_Click()                                                      **
+'**        Description  : When the button is clicked, the data is displayed on the chart 10 times **
+'**        DLL Function : spReadDataAdvEx(lpArray As Long, ByVal sChannel As Integer)             **
+'**                                                                                               **
+'***************************************************************************************************
+
+Private Sub Graph_view_Click()
+        
+    Dim sRtn As Integer
+    Dim i As Double
+    
+    i = 0
+    
+    Do
+        
+        DoEvents
+        DoEvents
+        DoEvents
+    
+        current_data_Click
+        i = i + 1
+    
+        DoEvents
+        DoEvents
+        DoEvents
+        
+    Loop Until i = 10
+    
+End Sub
+
+'**********************************************************************************************
+'**                                                                                          **
+'**        Function     : Integration_time_Change()                                          **
+'**        Description  : Set Integration Time                      .                        **
+'**        DLL Function : spSetIntEx(ByVal IntTime As Long, ByVal sChannel As Integer)       **
+'**                                                                                          **
+'**********************************************************************************************
+Private Sub Integration_time_Change()
+    
+    Dim sRtn As Integer
+
+    If (Integration_time.text = "") Then
+        ElseIf (sModel = "SM44X") Then
+            lIntTime = Integration_time.text
+            sRtn = spSetDblIntEx(lIntTime, 0)
+        ElseIf (Integration_time.text > 0) Then
+            lIntTime = Integration_time.text
+            sRtn = spSetIntEx(lIntTime, 0)        ''''''''''''''''''''''''''''''''''''''''DLL Function : Integration Time Set
+        End If
+ 
+
+End Sub
+
+
